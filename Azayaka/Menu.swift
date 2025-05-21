@@ -24,9 +24,11 @@ extension AppDelegate: NSMenuDelegate {
             } else {
                 typeText = "System Audio".local
             }
-            menu.addItem(header(String(format: "Recording %@".local, typeText), size: 12))
+            // Update header text to reflect buffering for replay
+            menu.addItem(header(String(format: "Buffering for Replay: %@".local, typeText), size: 12))
 
-            menu.addItem(NSMenuItem(title: "Stop Recording".local, action: #selector(stopRecording), keyEquivalent: ""))
+            // Change "Stop Recording" to "Save Last 30s Replay"
+            menu.addItem(NSMenuItem(title: "Save Last 30s Replay".local, action: #selector(saveReplayAndStop), keyEquivalent: ""))
             menu.addItem(NSMenuItem.separator())
             menu.addItem(info)
 
@@ -77,9 +79,13 @@ extension AppDelegate: NSMenuDelegate {
     }
 
     func updateMenu() {
-        if streamType != nil { // recording?
-            updateIcon()
-            info.attributedTitle = NSAttributedString(string: String(format: "Duration: %@\nFile size: %@".local, arguments: [getRecordingLength(), getRecordingSize()]))
+        if streamType != nil { // buffering?
+            updateIcon() // updateIcon will now use replay buffer duration via getRecordingLength
+            let bufferDuration = replayBufferManager.getCurrentBufferDuration(type: .screen) // Or another appropriate type
+            let durationString = getFormattedDuration(from: bufferDuration.seconds)
+            info.attributedTitle = NSAttributedString(string: String(format: "Replay available: %@".local, durationString))
+            // File size is no longer relevant here as it's not continuously writing.
+            // Could add: "\n(Saves on demand)" or remove entirely. For now, removing file size.
         }
     }
 
@@ -208,8 +214,10 @@ extension AppDelegate: NSMenuDelegate {
 
     func updateIcon() {
         if let button = statusItem.button {
-            let iconView = NSHostingView(rootView: MenuBar(recordingStatus: self.streamType != nil, recordingLength: getRecordingLength()))
-            iconView.frame = NSRect(x: 0, y: 1, width: self.streamType != nil ? 72 : 33, height: 20)
+            // getRecordingLength will be modified separately to reflect buffer duration
+            let currentRecordingLength = getRecordingLength() // This should now reflect buffer duration
+            let iconView = NSHostingView(rootView: MenuBar(recordingStatus: self.streamType != nil, recordingLength: currentRecordingLength))
+            iconView.frame = NSRect(x: 0, y: 1, width: self.streamType != nil ? 72 : 33, height: 20) // Width might need adjustment if text changes
             button.subviews = [iconView]
             button.frame = iconView.frame
             button.setAccessibilityLabel("Azayaka")

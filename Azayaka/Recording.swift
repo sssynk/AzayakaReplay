@@ -68,6 +68,8 @@ extension AppDelegate {
     @objc func skipCountdown() { CountdownManager.shared.finishCountdown(startRecording: true) }
 
     func record(audioOnly: Bool, filter: SCContentFilter) async {
+        replayBufferManager.clearBuffers() // Clear buffers at the start of a new recording session
+
         var conf = SCStreamConfiguration()
         if #available(macOS 15.0, *), !audioOnly {
             if await ud.bool(forKey: Preferences.kEnableHDR) {
@@ -199,11 +201,12 @@ extension AppDelegate {
         default: assertionFailure("loaded unknown audio format: ".local + fileEnding)
         }
         filePath = "\(getFilePath()).\(fileEnding)"
-        do {
-            audioFile = try AVAudioFile(forWriting: URL(fileURLWithPath: filePath), settings: audioSettings, commonFormat: .pcmFormatFloat32, interleaved: false)
-        } catch {
-            DispatchQueue.main.async {
-                let alert = NSAlert()
+        // audioFile initialization is deferred until saving the replay.
+        // do {
+        //     audioFile = try AVAudioFile(forWriting: URL(fileURLWithPath: filePath), settings: audioSettings, commonFormat: .pcmFormatFloat32, interleaved: false)
+        // } catch {
+        //     DispatchQueue.main.async {
+        //         let alert = NSAlert()
                 alert.messageText = "Couldn't initialise the audio file!".local
                 alert.informativeText = error.localizedDescription
                 alert.addButton(withTitle: "Okay".local)
@@ -212,6 +215,7 @@ extension AppDelegate {
             }
             throw error
         }
+        // }
     }
 
     func getFilePath() -> String {
@@ -240,10 +244,19 @@ extension AppDelegate {
         formatter.allowedUnits = [.minute, .second]
         formatter.zeroFormattingBehavior = .pad
         formatter.unitsStyle = .positional
-        //if self.streamType == nil { self.startTime = nil }
-        if !useSystemRecorder || streamType == .systemaudio {
+
+        if streamType != nil { // Buffering for replay is active
+            // Get duration from ReplayBufferManager
+            let bufferDurationSeconds = replayBufferManager.getCurrentBufferDuration(type: .screen).seconds
+            if bufferDurationSeconds.isNaN || bufferDurationSeconds.isInfinite {
+                return "00:00" // Return default if buffer duration is not valid
+            }
+            return formatter.string(from: bufferDurationSeconds) ?? "00:00"
+        } else if !useSystemRecorder || streamType == .systemaudio { // Original logic for non-replay or specific audio recording
+            // This path might be taken when not actively buffering (e.g. before starting, or if system audio still uses old path)
+            // If startTime is nil (not started), it will effectively show 00:00 or "Unknown"
             return formatter.string(from: Date.now.timeIntervalSince(startTime ?? Date.now)) ?? "Unknown".local
-        } else if #available(macOS 15, *) {
+        } else if #available(macOS 15, *) { // System recorder logic
             if let recOut = (recordingOutput as? SCRecordingOutput) {
                 if recOut.recordedDuration.seconds.isNaN { return "00:00" }
                 return formatter.string(from: recOut.recordedDuration.seconds) ?? "Unknown".local

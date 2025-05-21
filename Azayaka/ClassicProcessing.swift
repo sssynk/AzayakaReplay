@@ -13,9 +13,10 @@ import ScreenCaptureKit
 
 extension AppDelegate {
     func initClassicRecorder(conf: SCStreamConfiguration, encoder: AVVideoCodecType, filePath: String, fileType: AVFileType) {
+        replayBufferManager.clearBuffers() // Clear buffers at the start of a new recording session
         startTime = nil
 
-        vW = try? AVAssetWriter.init(outputURL: URL(fileURLWithPath: filePath), fileType: fileType)
+        // vW = try? AVAssetWriter.init(outputURL: URL(fileURLWithPath: filePath), fileType: fileType) // Deferred
         let fpsMultiplier: Double = Double(ud.integer(forKey: Preferences.kFrameRate))/8
         let encoderMultiplier: Double = encoder == .hevc ? 0.5 : 0.9
         let targetBitrate = (Double(conf.width) * Double(conf.height) * fpsMultiplier * encoderMultiplier * ud.double(forKey: Preferences.kVideoQuality))
@@ -54,57 +55,71 @@ extension AppDelegate {
         // on macOS 15, the system recorder will handle mic recording directly with SCK + AVAssetWriter
         if #unavailable(macOS 15), recordMic {
             let input = audioEngine.inputNode
-            input.installTap(onBus: 0, bufferSize: 1024, format: input.inputFormat(forBus: 0)) { [self] (buffer, time) in
-                if micInput.isReadyForMoreMediaData && startTime != nil {
-                    micInput.append(buffer.asSampleBuffer!)
+            input.installTap(onBus: 0, bufferSize: 1024, format: input.inputFormat(forBus: 0)) { [weak self] (buffer, time) in
+                guard let self = self else { return }
+                if self.startTime != nil { // Ensure buffering/recording has started
+                    if let sampleBuffer = buffer.asSampleBuffer {
+                        // Add microphone samples to the ReplayBufferManager
+                        self.replayBufferManager.addSampleBuffer(sampleBuffer, type: .microphone)
+                    } else {
+                        print("Failed to convert AVAudioPCMBuffer to CMSampleBuffer for microphone audio.")
+                    }
                 }
             }
             try! audioEngine.start()
         }
 
-        vW.startWriting()
+        // vW.startWriting() // Deferred
     }
     
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of outputType: SCStreamOutputType) {
-        guard (streamType == .systemaudio || !useSystemRecorder) && sampleBuffer.isValid else { return }
+        guard sampleBuffer.isValid else { return } // Ensure buffer is valid before processing
+
+        // Add all valid buffers to the ReplayBufferManager
+        replayBufferManager.addSampleBuffer(sampleBuffer, type: outputType)
+
+        // The old logic for vW, vwInput, awInput, micInput, and audioFile writing is now removed.
+        // startTime logic will be handled when saving the replay.
+        
+        // Check for startTime for the overall recording session (buffering start)
+        // This does not start AVAssetWriter session, that's deferred.
+        if startTime == nil { // General startTime for the buffering session
+            startTime = Date.now
+            // If specific first-buffer actions are needed, they could go here,
+            // but not AVAssetWriter session start.
+        }
 
         switch outputType {
             case .screen:
-                if screen == nil && window == nil { break }
+                // if screen == nil && window == nil { break } // This check might be relevant for UI state, not buffer handling
                 guard let attachmentsArray = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
-                      let attachments = attachmentsArray.first else { return }
+                      let attachments = attachmentsArray.first else {
+                    print("Could not get attachments for screen sample.")
+                    return
+                }
                 guard let statusRawValue = attachments[SCStreamFrameInfo.status] as? Int,
                       let status = SCFrameStatus(rawValue: statusRawValue),
-                      status == .complete else { return }
-                
-                if vW != nil && vW?.status == .writing, startTime == nil {
-                    startTime = Date.now
-                    vW.startSession(atSourceTime: CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
+                      status == .complete else {
+                    // According to Apple's docs, we should not use incomplete frames.
+                    // print("Frame status not complete for screen sample: \(status.rawValue)")
+                    return // Don't add incomplete frames to the buffer
                 }
-                if vwInput.isReadyForMoreMediaData {
-                    vwInput.append(sampleBuffer)
-                }
+                // Screen buffer specific logic (e.g. setting initial startTime for writer session later)
+                // if vW != nil && vW?.status == .writing, sessionStartTime == nil { // sessionStartTime would be specific to AVAssetWriter
+                //     sessionStartTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+                //     vW.startSession(atSourceTime: sessionStartTime)
+                // }
+                // Removed: vwInput.append(sampleBuffer)
                 break
             case .audio:
-                if streamType == .systemaudio { // write directly to file if not video recording
-                    guard let samples = sampleBuffer.asPCMBuffer else { return }
-                    do {
-                        try audioFile!.write(from: samples)
-                    }
-                    catch { assertionFailure("audio file writing issue".local) }
-                } else { // otherwise send the audio data to AVAssetWriter
-                    if (awInput != nil) && awInput.isReadyForMoreMediaData {
-                        awInput.append(sampleBuffer)
-                    }
-                }
-            case .microphone: // only available on sequoia - older versions will use AVAudioEngine
-                if streamType != .systemaudio {
-                    if (micInput != nil) && micInput.isReadyForMoreMediaData {
-                        micInput.append(sampleBuffer)
-                    }
-                }
+                // Removed: audioFile!.write(from: samples) logic for .systemaudio
+                // Removed: awInput.append(sampleBuffer)
+                break
+            case .microphone:
+                // Removed: micInput.append(sampleBuffer)
+                break
             @unknown default:
-                assertionFailure("unknown stream type".local)
+                print("Unknown stream type encountered: \(outputType)")
         }
     }
 }
