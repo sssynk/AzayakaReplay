@@ -34,6 +34,7 @@ struct Preferences: View {
     static let kUpdateCheck     = "updateCheck"
     static let kCountdownSecs   = "countDown"
     static let kSystemRecorder  = "useSystemRecorder"
+    static let kReplayDuration  = "replayDurationSeconds" // Added new key for Replay Duration
 
     var body: some View {
         VStack {
@@ -318,6 +319,7 @@ struct Preferences: View {
         @AppStorage(kUpdateCheck)    private var updateCheck: Bool = true
         @AppStorage(kCountdownSecs)  private var countDown: Int = 0
         @AppStorage(kSystemRecorder) private var useSystemRecorder: Bool = false
+        @AppStorage(kReplayDuration) private var replayDuration: Int = 30 // Added for Replay Duration
 
         private var numberFormatter: NumberFormatter {
             let formatter = NumberFormatter()
@@ -360,6 +362,18 @@ struct Preferences: View {
                         }.frame(maxWidth: 200)
                         Text("Countdown to start recording, in seconds.")
                             .font(.subheadline).foregroundColor(Color.gray)
+                    }.padding(10).frame(maxWidth: .infinity)
+                }.padding([.leading, .trailing], 10)
+                GroupBox {
+                    VStack {
+                        Picker("Replay Duration:".local, selection: $replayDuration) {
+                            Text("15 seconds".local).tag(15)
+                            Text("30 seconds".local).tag(30)
+                            Text("45 seconds".local).tag(45)
+                            Text("60 seconds".local).tag(60)
+                        }.padding([.leading, .trailing], 10)
+                        Text("Duration of the replay to be saved.".local)
+                           .font(.subheadline).foregroundColor(Color.gray)
                     }.padding(10).frame(maxWidth: .infinity)
                 }.padding([.leading, .trailing], 10)
                 GroupBox {
